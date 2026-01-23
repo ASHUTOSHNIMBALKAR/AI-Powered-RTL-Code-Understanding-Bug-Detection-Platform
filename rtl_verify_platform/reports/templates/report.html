@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RTL Verification Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; border-radius: 8px; padding: 24px; margin-bottom: 20px; border: 1px solid #334155; }
+        h1 { color: #38bdf8; }
+        .badge-pass { background: #16a34a; color: white; padding: 4px 8px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>RTL Verification & Bug Detection Report</h1>
+    <div class="card">
+        <h2>Module: {{ top_module }}</h2>
+        <p>Status: <span class="badge-pass">{{ status }}</span></p>
+        <p>Simulation Engine: {{ engine }}</p>
+        <p>Waveform Output: <code>{{ vcd_path }}</code></p>
+    </div>
+</body>
+</html>
