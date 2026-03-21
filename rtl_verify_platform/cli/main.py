@@ -18,10 +18,9 @@ app = typer.Typer(
 
 console = Console(force_terminal=True)
 
-# Cross-platform safe check/cross marks
 IS_UTF8 = sys.stdout and sys.stdout.encoding and "utf-8" in sys.stdout.encoding.lower()
-CHECK_MARK = "✔" if (sys.platform != "win32" or IS_UTF8) else "[OK]"
-CROSS_MARK = "✘" if (sys.platform != "win32" or IS_UTF8) else "[FAIL]"
+CHECK_MARK = "[OK]" if sys.platform == "win32" and not IS_UTF8 else "✓"
+CROSS_MARK = "[FAIL]" if sys.platform == "win32" and not IS_UTF8 else "✗"
 
 @app.callback()
 def main(
@@ -29,7 +28,7 @@ def main(
 ):
     """Platform callback to configure verbosity."""
     if verbose:
-        setup_logger(level=10) # DEBUG
+        setup_logger(level=10)
 
 @app.command()
 def compile(
