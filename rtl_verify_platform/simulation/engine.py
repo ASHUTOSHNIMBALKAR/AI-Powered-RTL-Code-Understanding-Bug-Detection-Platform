@@ -11,6 +11,9 @@ from rtl_verify_platform.simulation.templates import generate_cpp_tb
 class SimulationEngine:
     """Compiles Verilog/SystemVerilog RTL and runs simulations using Verilator or a mock fallback."""
     
+    COMMENT_PATTERN = re.compile(r"//.*|/\*.*?\*/", flags=re.DOTALL)
+    INPUT_PATTERN = re.compile(r"\binput\s+(?:wire\s+|reg\s+|logic\s+)?(?:\[[^\]]*\]\s*)?(\w+)\b", re.IGNORECASE)
+
     def __init__(self, output_dir: str | Path = None):
         config_out = config_manager.get("simulator.output_dir", "sim_build")
         self.output_dir = Path(output_dir or config_out)
@@ -27,16 +30,11 @@ class SimulationEngine:
             return clocks, resets
 
         try:
-            with open(rtl_path, "r") as f:
+            with open(rtl_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
 
-            # Remove comments to avoid false matches
-            content_no_comments = re.sub(r"//.*|/\*.*?\*/", "", content, flags=re.DOTALL)
-            
-            # Match input ports
-            # Match: input [width] name
-            input_pattern = re.compile(r"\binput\s+(?:wire\s+|reg\s+|logic\s+)?(?:\[[^\]]*\]\s*)?(\w+)\b", re.IGNORECASE)
-            inputs = input_pattern.findall(content_no_comments)
+            content_no_comments = self.COMMENT_PATTERN.sub("", content)
+            inputs = self.INPUT_PATTERN.findall(content_no_comments)
             
             for inp in inputs:
                 inp_lower = inp.lower()
@@ -58,31 +56,22 @@ class SimulationEngine:
         max_sim_time: int = 1000,
         use_mock: bool = False
     ) -> Dict[str, Any]:
-        """Runs the entire compilation and simulation workflow.
-        
-        Returns:
-            Dict containing build status, sim status, logs, and pathways to outputs.
-        """
         rtl_paths = [Path(f) for f in rtl_files]
         vcd_name = config_manager.get("simulator.vcd_filename", "waveform.vcd")
         vcd_path = self.output_dir / vcd_name
         
-        # Determine engine
         engine_mode = config_manager.get("simulator.default_engine", "verilator")
         
-        # Check if verilator is available, else force mock
         if not use_mock and engine_mode == "verilator":
             if not shutil.which(self.verilator_path):
-                logger.warning(f"Verilator not found in PATH. Falling back to MOCK mode.")
+                logger.warning("Verilator not found in PATH. Falling back to MOCK mode.")
                 use_mock = True
 
         if use_mock or engine_mode == "mock":
             return self._run_mock_simulation(top_module, vcd_path, max_sim_time)
 
-        # Real Verilator simulation workflow
         logger.info(f"Starting Verilator simulation compile for {top_module}...")
         
-        # 1. Testbench Setup
         tb_cpp_path = self.output_dir / f"tb_{top_module}.cpp"
         if custom_tb_path:
             shutil.copy(custom_tb_path, tb_cpp_path)
@@ -90,7 +79,7 @@ class SimulationEngine:
         else:
             clocks, resets = self.detect_clk_rst(rtl_paths[0])
             if not clocks:
-                clocks = ["clk"] # Default fallback
+                clocks = ["clk"]
             if not resets:
                 resets = [{"name": "rst_n", "active": "low"}]
             
@@ -101,12 +90,10 @@ class SimulationEngine:
                 resets=resets,
                 max_sim_time=max_sim_time
             )
-            with open(tb_cpp_path, "w") as f:
+            with open(tb_cpp_path, "w", encoding="utf-8") as f:
                 f.write(tb_content)
             logger.info(f"Auto-generated C++ testbench wrapper at {tb_cpp_path}")
 
-        # 2. Verilator Compilation
-        # Command: verilator --cc <rtl> --exe <tb> --trace -Mdir <build_dir> --prefix V<top> -Wall
         build_dir = self.output_dir / "obj_dir"
         cmd = [
             self.verilator_path,
@@ -121,145 +108,86 @@ class SimulationEngine:
             f"V{top_module}",
             "-Wall"
         ]
-
-        logger.debug(f"Verilator command: {' '.join(cmd)}")
         
+        logger.debug(f"Running Verilator cmd: {' '.join(cmd)}")
         try:
-            compile_res = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            
-            if compile_res.returncode != 0:
-                logger.error("Verilator compilation failed!")
-                return {
-                    "success": False,
-                    "stage": "compile",
-                    "returncode": compile_res.returncode,
-                    "stdout": compile_res.stdout,
-                    "stderr": compile_res.stderr,
-                    "vcd_path": None
-                }
-        except Exception as e:
-            logger.error(f"Verilator execution error: {e}")
+            verilate_res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Verilator compilation failed:\n{e.stderr}")
             return {
                 "success": False,
-                "stage": "compile_exec",
-                "error": str(e),
-                "vcd_path": None
+                "stage": "verilate",
+                "stderr": e.stderr,
+                "stdout": e.stdout
             }
+        except FileNotFoundError:
+            logger.error("Verilator executable not found.")
+            return {"success": False, "error": "Verilator not installed or not in PATH."}
 
-        # 3. Compile the generated C++ files to binary executable
-        # Command: make -C <build_dir> -j -f V<top>.mk V<top>
-        make_cmd = [
-            "make",
-            "-C",
-            str(build_dir.resolve()),
-            "-j",
-            "-f",
-            f"V{top_module}.mk",
-            f"V{top_module}"
-        ]
-        
-        logger.debug(f"Make command: {' '.join(make_cmd)}")
+        make_cmd = ["make", "-C", str(build_dir.resolve()), "-f", f"V{top_module}.mk"]
+        logger.debug(f"Running Make cmd: {' '.join(make_cmd)}")
         try:
-            make_res = subprocess.run(
-                make_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            if make_res.returncode != 0:
-                logger.error("Make compilation of Verilator C++ sources failed!")
-                return {
-                    "success": False,
-                    "stage": "make",
-                    "returncode": make_res.returncode,
-                    "stdout": make_res.stdout,
-                    "stderr": make_res.stderr,
-                    "vcd_path": None
-                }
-        except Exception as e:
-            logger.error(f"Make execution error: {e}")
+            make_res = subprocess.run(make_cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Make build failed:\n{e.stderr}")
             return {
                 "success": False,
-                "stage": "make_exec",
-                "error": str(e),
-                "vcd_path": None
+                "stage": "make",
+                "stderr": e.stderr,
+                "stdout": e.stdout
             }
 
-        # 4. Execute the simulation binary
-        sim_exe = build_dir / f"V{top_module}"
-        logger.info(f"Running simulation binary {sim_exe}...")
-        try:
-            sim_res = subprocess.run(
-                [str(sim_exe.resolve())],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            if sim_res.returncode != 0:
-                logger.error("Simulation run failed!")
-                return {
-                    "success": False,
-                    "stage": "simulate",
-                    "returncode": sim_res.returncode,
-                    "stdout": sim_res.stdout,
-                    "stderr": sim_res.stderr,
-                    "vcd_path": None
-                }
+        exe_path = build_dir / f"V{top_module}"
+        if not exe_path.exists() and (build_dir / f"V{top_module}.exe").exists():
+            exe_path = build_dir / f"V{top_module}.exe"
             
-            logger.info("Simulation completed successfully.")
+        logger.info(f"Executing simulation binary: {exe_path}")
+        try:
+            sim_res = subprocess.run([str(exe_path.resolve())], capture_output=True, text=True, check=True)
             return {
                 "success": True,
                 "stage": "completed",
                 "stdout": sim_res.stdout,
                 "stderr": sim_res.stderr,
-                "vcd_path": str(vcd_path.resolve())
+                "vcd_path": str(vcd_path.resolve()) if vcd_path.exists() else None
             }
-        except Exception as e:
-            logger.error(f"Simulation execution error: {e}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Simulation execution failed:\n{e.stderr}")
             return {
                 "success": False,
-                "stage": "simulate_exec",
-                "error": str(e),
-                "vcd_path": None
+                "stage": "simulate",
+                "stderr": e.stderr,
+                "stdout": e.stdout
             }
 
     def _run_mock_simulation(self, top_module: str, vcd_path: Path, max_sim_time: int) -> Dict[str, Any]:
-        """Runs a mock simulation generating basic outputs and a valid synthetic VCD file."""
-        logger.info(f"[MOCK MODE] Simulating {top_module}...")
+        logger.info(f"Executing mock simulation run for module '{top_module}' (max_time={max_sim_time})...")
         
-        # Write dummy VCD waveform file
-        vcd_content = f"""$date
-   Tue Jun 30 12:00:00 2026
+        vcd_content = """$date
+   Mock Simulation Date
 $end
 $version
-   AI RTL Platform Mock Sim
+   AI RTL Platform Mock Engine 1.0
 $end
 $timescale
    1ns
 $end
-$scope module {top_module} $end
+$scope module mock_scope $end
 $var wire 1 # clk $end
 $var wire 1 $ rst_n $end
-$var wire 8 % count [7:0] $end
+$var wire 8 % count $end
 $upscope $end
 $enddefinitions $end
 #0
-$dumpvars
 0#
 0$
 b00000000 %
-$end
 #10
+1#
 1$
 #20
+0#
+#25
 1#
 b00000001 %
 #30
@@ -271,7 +199,7 @@ b00000010 %
 0#
 """
         try:
-            with open(vcd_path, "w") as f:
+            with open(vcd_path, "w", encoding="utf-8") as f:
                 f.write(vcd_content)
         except Exception as e:
             logger.error(f"Failed to write mock VCD file: {e}")
