@@ -120,13 +120,6 @@ sim_build/               Generated simulator artifacts and VCD output
 tests/                   Pytest suite
 ```
 
-## Limitations
-
-- Clock/reset discovery is based on regular expressions and is not a full Verilog/SystemVerilog parser; complex or differently formatted declarations may not be detected correctly.
-- The automatically generated testbench only initializes and toggles detected clocks and applies reset. It does not create functional stimulus or check design assertions.
-- Mock mode produces a fixed synthetic waveform and should not be used to validate RTL behavior.
-- AI-based design comprehension, bug detection, waveform interpretation, and HTML/JSON reporting are not implemented yet.
-
 ## License
 
 No license file is currently included. Add a license before distributing or accepting contributions under an open-source license.
