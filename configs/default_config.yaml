@@ -1,0 +1,28 @@
+# Default Configuration for AI RTL Verification Platform
+
+simulator:
+  default_engine: "verilator"  # Options: verilator, mock
+  verilator_path: "verilator"
+  cxx_compiler: "g++"
+  output_dir: "sim_build"
+  vcd_filename: "waveform.vcd"
+
+database:
+  db_url: "sqlite:///rtl_verify.db"
+
+ai:
+  provider: "openai"  # Options: openai, huggingface, mock
+  api_key: ""         # To be filled by user / env variable
+  api_base: "https://api.openai.com/v1"
+  model: "gpt-4-turbo"
+  local_hf_model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  temperature: 0.1
+
+analysis:
+  max_waveform_transitions: 100000
+  glitch_threshold_ns: 0.1
+  unreachable_state_check: true
+
+reports:
+  output_dir: "reports"
+  formats: ["html", "json"]

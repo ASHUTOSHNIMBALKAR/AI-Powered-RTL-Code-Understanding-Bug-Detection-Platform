@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.dist-info/
+.venv/
+venv/
+.env
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Generated simulation outputs
+sim_build/obj_dir/
+sim_build/*.vcd
+sim_build/tb_*.cpp
+rtl_verify.db
